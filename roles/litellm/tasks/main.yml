@@ -1,0 +1,25 @@
+---
+- name: Create the LiteLLM directory
+  ansible.builtin.file:
+    path: /opt/litellm
+    state: directory
+    mode: "0755"
+
+- name: Download the LiteLLM compose file
+  ansible.builtin.get_url:
+    url: https://docs.litellm.ai/docker-compose.yml
+    dest: /opt/litellm/docker-compose.yml
+    mode: "0644"
+    force: true
+    backup: true
+
+- name: Install the LiteLLM compose override
+  ansible.builtin.copy:
+    src: docker-compose.override.yml
+    dest: /opt/litellm/docker-compose.override.yml
+    mode: "0600"
+
+- name: Start the LiteLLM stack
+  community.docker.docker_compose_v2:
+    project_src: /opt/litellm
+    state: present

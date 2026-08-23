@@ -1,0 +1,9 @@
+---
+# Docker Compose merges this file on top of docker-compose.yml automatically.
+# Override the placeholder credentials from the LiteLLM quickstart compose file.
+# LITELLM_SALT_KEY encrypts provider keys stored in the DB — do not change it later.
+services:
+  litellm:
+    environment:
+      LITELLM_MASTER_KEY: sk-local-dev-master-key
+      LITELLM_SALT_KEY: sk-local-dev-salt-key-change-me

@@ -1,0 +1,10 @@
+---
+- name: Set up the AI gateway VM
+  hosts: gateway
+  become: true
+  roles:
+    - geerlingguy.docker
+    - langfuse
+    - litellm
+    - nginxinc.nginx
+    - nginx_gateway
