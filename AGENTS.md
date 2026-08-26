@@ -1,33 +1,27 @@
 # AGENTS.md
 
-Instructions for AI agents operating in this repository.
+General guidance for AI agents working in this repository.
 
-## Goal
+This is a small Ansible project. It is deliberately plain: no Jinja templating, no generated config, no vault, no lint gates. Keep it that way.
 
-Bring up Langfuse + LiteLLM + nginx on one Ubuntu VM via Ansible. The human usually only supplies a **VM IP**. Follow [`README.md`](README.md) as the runbook.
+## Make minimal changes
 
-## Do this
+Prefer the smallest edit that solves the problem. Don't refactor code you weren't asked to touch, don't add abstraction for something used once, and don't introduce tooling (linters, CI, test harnesses, secret managers) unless asked. If you spot an unrelated problem, mention it instead of fixing it.
 
-1. Read `README.md` and run the steps in **Deploy (given a VM IP)** in order.
-2. Set **only** `ansible_host` in `inventory/hosts.yml` to the provided IP. Leave `ansible_user: root`.
-3. Verify SSH first: `ssh -o BatchMode=yes -o ConnectTimeout=10 root@VM_IP 'echo ok'`. If that fails, stop and report — do not run the playbook.
-4. Run `ansible-playbook site.yml` from the repo root with the `.venv` activated.
-5. After a successful playbook, wait ~2–3 minutes, then run the health curls from the README (with `/etc/hosts` updated, or use `curl -H 'Host: langfuse.test' http://VM_IP/...` if you cannot edit hosts).
-6. Report: playbook recap, health check HTTP status codes, and the UI URLs + default logins from the README.
+## Optimize for understanding
 
-## Do not do this
+Someone should be able to read a file top to bottom and know what it does without tracing indirection. A static config file you can read beats a template with loops and variables. Literal values beat variables that exist only to be substituted once. When a project has its own documented setup, follow that instead of inventing a local convention, so the docs stay a useful reference.
 
-- Do not create new roles, playbooks, vault files, or CI unless the human asks.
-- Do not change Langfuse/LiteLLM secrets unless the human asks.
-- Do not change `LITELLM_SALT_KEY` after a successful deploy with stored provider keys.
-- Do not pin image versions or vendor compose files; roles intentionally re-download upstream compose on each run.
-- Do not use `ansible-lint`, Molecule, or a verify playbook — verification is manual curl/browser checks.
-- Do not commit `.venv/`, `.ansible/`, or real production secrets.
+Prefer boring and obvious over clever and short.
 
-## Facts that prevent wrong guesses
+## Keep it easy to change
 
-- Inventory group is `gateway`; playbook hosts pattern is `gateway`.
-- Connection user is `root` (`become: true` is still set; that is expected).
-- Langfuse listens on host port **3000**; LiteLLM on **4000**; nginx on **80**.
-- Hostnames are `langfuse.test` and `litellm.test` (`.test` is a domain suffix, not a test suite).
-- Galaxy install: `ansible-galaxy install -r requirements.yml` (roles land under `.ansible/roles` per `ansible.cfg`).
+Give each file one job and keep it short enough to read in one screen. Avoid coupling that forces someone to edit two files to make one change, unless splitting them buys real clarity. Name things so the next reader doesn't need a glossary.
+
+## Think before coding
+
+State your assumptions, and ask when a request has more than one reasonable interpretation rather than silently picking. If a simpler approach exists than the one requested, say so. If you're adding complexity, explain what it buys.
+
+## Deploying
+
+For bringing up a VM, use the `deploy-gateway-vm` skill in `.cursor/skills/`. `README.md` is the runbook.
