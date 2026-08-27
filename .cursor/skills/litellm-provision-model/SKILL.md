@@ -69,6 +69,8 @@ curl -sS -o /dev/null -w 'model/info %{http_code}\n' \
 
 Expect `200` twice. A `401` on the second means the master key is wrong. Connection refused means the proxy is down, so stop and report rather than retrying blindly
 
+In Cursor's agent sandbox, curl to `litellm.test` or the VM IP often returns HTTP 403 with body `Blocked by sandbox network policy`. That is not DNS or a wrong base URL. Re-run the curl with full network permissions (`required_permissions: ["all"]` on the Shell tool). `litellm.test` only resolves via `/etc/hosts` (public DNS has no record), so confirm the hosts entry exists before blaming resolution
+
 ### Step 3: pick the litellm model string
 
 The format is `<provider>/<model>`. Treat your training knowledge as stale and look the model up, preferring the newest model in the family the user named:
@@ -191,3 +193,4 @@ curl -sS -X POST "$LITELLM_BASE_URL/model/delete" \
 | `LLM Provider NOT provided` on a completion | `litellm_params.model` is missing its provider prefix |
 | Two rows share a `model_name` | A duplicate `/model/new`. Delete the stale `model_id` |
 | Reaches nginx but 404s | Wrong Host header. Use `-H 'Host: litellm.test'` or hit port 4000 directly |
+| 403 `Blocked by sandbox network policy` on curl | Agent sandbox blocked outbound HTTP to the VM or `litellm.test`. Re-run with full network permissions, not a different URL |
