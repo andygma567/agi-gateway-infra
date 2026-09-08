@@ -19,6 +19,13 @@ Examples (from the repo root, against the test gateway):
       --model-a groq/openai/gpt-oss-20b \\
       --model-b groq/openai/gpt-oss-120b
 
+The direct mode skips the proxy and calls api.groq.com, which tells you whether
+a missing cached_tokens came from Groq or from LiteLLM:
+
+  export GROQ_API_KEY=...
+  python3 scripts/groq_cache_experiment.py direct \\
+      --model groq/openai/gpt-oss-20b
+
 Override the public LiteLLM model_name if you registered an alias.
 """
 
@@ -37,15 +44,17 @@ from typing import Any
 
 DEFAULT_BASE_URL = "http://litellm.test"
 DEFAULT_MASTER_KEY = "sk-local-dev-master-key"
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+DEFAULT_QUESTION = "In one paragraph, explain why the static prefix must come first."
 DEFAULT_MODEL_A = "groq/openai/gpt-oss-20b"
 DEFAULT_MODEL_B = "groq/openai/gpt-oss-120b"
 
 # Repeated so the static prefix is well above typical cache floors (~1k tokens).
 _PREFIX_UNIT = (
-    "Keep this block at the front of every request. Prompt caching on Groq "
-    "only hits when the prefix matches exactly, so instructions, tool specs, "
-    "and background stay here and the user question stays last. Cached input "
-    "tokens are billed at half the uncached input rate. This paragraph is "
+    "Keep this block at the front of every request. Prompt caching only hits "
+    "when the prefix matches exactly, so instructions, tool specs, and "
+    "background stay here and the user question stays last. Cached input "
+    "tokens are billed below the uncached input rate. This paragraph is "
     "padding so the prefix is long enough to be eligible for a cache hit. "
 )
 
@@ -60,6 +69,7 @@ class Turn:
     cost: str | None
     hit_pct: str
     content: str
+    finish_reason: str | None
     usage: dict[str, Any]
     error: str | None = None
 
@@ -86,6 +96,8 @@ def request_json(
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", f"Bearer {key}")
     req.add_header("Accept", "application/json")
+    # Cloudflare in front of api.groq.com rejects the default Python-urllib agent with error 1010.
+    req.add_header("User-Agent", "groq-cache-experiment/1.0")
     if body is not None:
         req.add_header("Content-Type", "application/json")
     if host_header:
@@ -131,6 +143,30 @@ def complete(
     )
 
 
+def complete_direct(
+    *,
+    groq_key: str,
+    model: str,
+    messages: list[dict[str, str]],
+    max_tokens: int,
+    timeout: float,
+) -> tuple[dict[str, str], dict[str, Any]]:
+    body = {
+        "model": model.removeprefix("groq/"),
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "stream": False,
+    }
+    return request_json(
+        GROQ_API_URL,
+        method="POST",
+        key=groq_key,
+        body=body,
+        host_header=None,
+        timeout=timeout,
+    )
+
+
 def parse_turn(label: str, model: str, headers: dict[str, str], payload: dict[str, Any]) -> Turn:
     usage = payload.get("usage") or {}
     details = usage.get("prompt_tokens_details") or {}
@@ -144,8 +180,10 @@ def parse_turn(label: str, model: str, headers: dict[str, str], payload: dict[st
         hit = f"{100.0 * cached / prompt:.1f}%"
     choices = payload.get("choices") or []
     content = ""
+    finish_reason = None
     if choices:
         content = ((choices[0].get("message") or {}).get("content")) or ""
+        finish_reason = choices[0].get("finish_reason")
     return Turn(
         label=label,
         model=model,
@@ -155,6 +193,7 @@ def parse_turn(label: str, model: str, headers: dict[str, str], payload: dict[st
         cost=headers.get("x-litellm-response-cost"),
         hit_pct=hit,
         content=content.replace("\n", " ").strip(),
+        finish_reason=finish_reason,
         usage=usage if isinstance(usage, dict) else {},
     )
 
@@ -170,6 +209,7 @@ def print_turn(turn: Turn) -> None:
         f"cached_tokens={turn.cached_tokens}  "
         f"hit={turn.hit_pct}  "
         f"completion_tokens={turn.completion_tokens}  "
+        f"finish_reason={turn.finish_reason}  "
         f"x-litellm-response-cost={turn.cost}"
     )
     print("usage.prompt_tokens_details =", json.dumps(turn.usage.get("prompt_tokens_details"), indent=2))
@@ -177,6 +217,12 @@ def print_turn(turn: Turn) -> None:
     if turn.content:
         snippet = turn.content if len(turn.content) <= 240 else turn.content[:237] + "..."
         print("assistant:", snippet)
+    else:
+        reasoning = (turn.usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
+        print(
+            f"assistant: <empty> (finish_reason={turn.finish_reason}, reasoning_tokens={reasoning}). "
+            "Raise --max-tokens so the answer fits after reasoning."
+        )
 
 
 def print_summary(turns: list[Turn]) -> None:
@@ -234,14 +280,57 @@ def cmd_cold_warm(args: argparse.Namespace) -> None:
     if turns[0].cached_tokens:
         print(
             "\nnote: cold already had cached_tokens > 0. "
-            "A leftover prefix from a recent run is still warm (Groq TTL is 2 hours)."
+            "A leftover prefix from a recent run is still warm."
         )
     elif turns[-1].cached_tokens in (None, 0):
         print(
-            "\nnote: warm cached_tokens was 0. Check that this model is in Groq's "
-            "prompt-cache list (gpt-oss-20b / gpt-oss-120b / gpt-oss-safeguard-20b), "
-            "that the prefix is long enough, and that you did not stream."
+            "\nnote: warm cached_tokens was 0. Either this provider does not report cached "
+            "tokens (Groq gpt-oss does not, as of this writing), the prefix is below the "
+            "provider's cache floor, or the two calls were too far apart."
         )
+
+
+def cmd_direct(args: argparse.Namespace) -> None:
+    groq_key = os.environ.get("GROQ_API_KEY", "").strip()
+    if not groq_key:
+        raise SystemExit(
+            "Set GROQ_API_KEY first. This mode calls api.groq.com directly, so it needs the\n"
+            "Groq provider key, not the LiteLLM master key:  export GROQ_API_KEY=..."
+        )
+    messages = [
+        {"role": "system", "content": system_prompt(args.prefix_repeats)},
+        {"role": "user", "content": args.question},
+    ]
+    turns: list[Turn] = []
+    for label in ("direct-cold", "direct-warm"):
+        headers, payload = complete_direct(
+            groq_key=groq_key,
+            model=args.model,
+            messages=messages,
+            max_tokens=args.max_tokens,
+            timeout=args.timeout,
+        )
+        turn = parse_turn(label, args.model, headers, payload)
+        print_turn(turn)
+        turns.append(turn)
+        if label == "direct-cold" and args.pause > 0:
+            time.sleep(args.pause)
+    print_summary(turns)
+    if any(turn.cached_tokens for turn in turns):
+        print(
+            "\nGroq reported cached tokens on this direct call. If the same prompt through the\n"
+            "proxy reported none, LiteLLM is dropping the field, not Groq."
+        )
+    else:
+        print(
+            "\nGroq reported no cached tokens even without the proxy in the path, so the gap is\n"
+            "upstream of LiteLLM. Check that this model and account support prompt caching."
+        )
+    print(
+        "note: both paths share one Groq account and cache the same prefix, so a proxy run in\n"
+        "the last couple of hours can leave direct-cold already warm. That still counts as proof\n"
+        "that Groq is caching."
+    )
 
 
 def cmd_switch(args: argparse.Namespace) -> None:
@@ -277,7 +366,7 @@ def cmd_switch(args: argparse.Namespace) -> None:
         "\nwhat to look for: A-cold and B-after-A should be near cached_tokens=0 "
         "(new model, or first use of this prefix). A-warm and B-warm should rise. "
         "A-after-B may still show a partial hit on the shared system+early-A prefix "
-        "if that prefix is still in Groq's cache."
+        "if that prefix is still in the provider's cache."
     )
 
 
@@ -291,7 +380,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Set when calling the VM IP instead of litellm.test, e.g. litellm.test",
     )
     shared.add_argument("--timeout", type=float, default=120.0)
-    shared.add_argument("--max-tokens", type=int, default=64)
+    shared.add_argument(
+        "--max-tokens",
+        type=int,
+        default=512,
+        help="Must cover reasoning tokens plus the answer; gpt-oss spends the budget on reasoning first",
+    )
     shared.add_argument("--prefix-repeats", type=int, default=40, help="How many times to repeat the static prefix block")
     shared.add_argument("--pause", type=float, default=0.0, help="Seconds to wait between turns")
 
@@ -307,8 +401,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     cold = sub.add_parser("cold-warm", parents=[shared], help="Send the same prompt twice on one model")
     cold.add_argument("--model", default=_env("LITELLM_MODEL", DEFAULT_MODEL_A))
-    cold.add_argument("--question", default="In one paragraph, explain why the static prefix must come first.")
+    cold.add_argument("--question", default=DEFAULT_QUESTION)
     cold.set_defaults(func=cmd_cold_warm)
+
+    direct = sub.add_parser(
+        "direct",
+        parents=[shared],
+        help="Same cold/warm pair sent straight to api.groq.com, bypassing the proxy",
+    )
+    direct.add_argument("--model", default=_env("LITELLM_MODEL", DEFAULT_MODEL_A))
+    direct.add_argument("--question", default=DEFAULT_QUESTION)
+    direct.set_defaults(func=cmd_direct)
 
     switch = sub.add_parser("switch", parents=[shared], help="Multi-turn conversation that swaps model A and model B")
     switch.add_argument("--model-a", default=_env("LITELLM_MODEL_A", DEFAULT_MODEL_A))
