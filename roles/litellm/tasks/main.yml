@@ -23,3 +23,44 @@
   community.docker.docker_compose_v2:
     project_src: /opt/litellm
     state: present
+
+- name: Read the LiteLLM master key from the compose override
+  ansible.builtin.set_fact:
+    litellm_master_key: "{{ (lookup('ansible.builtin.file', 'docker-compose.override.yml') | from_yaml).services.litellm.environment.LITELLM_MASTER_KEY }}"
+  no_log: true
+
+- name: Wait for LiteLLM to accept API requests
+  ansible.builtin.uri:
+    url: http://127.0.0.1:4000/health/liveliness
+  register: litellm_liveliness
+  until: litellm_liveliness is success
+  retries: 30
+  delay: 5
+
+- name: Read the current LiteLLM general settings
+  ansible.builtin.uri:
+    url: http://127.0.0.1:4000/config/list?config_type=general_settings
+    headers:
+      Authorization: "Bearer {{ litellm_master_key }}"
+  register: litellm_general_settings
+
+- name: Check whether an admin already chose a prompt-storage setting
+  ansible.builtin.set_fact:
+    litellm_prompt_storage_already_set: >-
+      {{ litellm_general_settings.json
+         | selectattr('field_name', 'equalto', 'store_prompts_in_spend_logs')
+         | selectattr('stored_in_db', 'equalto', true)
+         | list | length > 0 }}
+
+- name: Store prompts and responses in spend logs (first deploy only)
+  ansible.builtin.uri:
+    url: http://127.0.0.1:4000/config/update
+    method: POST
+    headers:
+      Authorization: "Bearer {{ litellm_master_key }}"
+    body_format: json
+    body:
+      general_settings:
+        store_prompts_in_spend_logs: true
+        maximum_spend_logs_retention_period: 30d
+  when: not litellm_prompt_storage_already_set | bool

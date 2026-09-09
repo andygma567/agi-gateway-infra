@@ -64,6 +64,20 @@ UIs (browser):
 Debugging tips (Host-header routing, bypassing nginx, on-VM logs): [`docs/verify.md`](docs/verify.md).  
 How nginx hostname routing works: [`docs/nginx_routing.md`](docs/nginx_routing.md).
 
+## LiteLLM request/response logging
+
+The first playbook run turns on **Store Prompts in Spend Logs**, so the Logs page shows full
+request and response bodies instead of the "Request/Response Data Not Available" banner. It also
+sets a 30-day retention period, since storing bodies grows the Postgres volume much faster than
+metadata alone.
+
+The playbook writes this through the same API call the dashboard uses, so the UI stays the source
+of truth. Change it at http://litellm.test/ui under **Admin Settings → Logging Settings**: toggle
+**Store Prompts in Spend Logs**, optionally adjust **Maximum Spend Logs Retention Period**, then
+click **Save Settings**. If you turn it off there, later playbook runs leave it off.
+
+Either way it applies only to new requests, so entries logged before it was enabled stay empty.
+
 ## Optional: change secrets
 
 Only if you want non-default credentials:
@@ -80,7 +94,7 @@ site.yml                 # playbook entrypoint
 inventory/hosts.yml      # VM IP + ansible_user
 requirements.yml         # Galaxy roles + collections
 roles/langfuse/          # download compose + .env + up
-roles/litellm/           # download compose + override + up
+roles/litellm/           # download compose + override + up + logging defaults
 roles/nginx_gateway/     # hostname vhosts
 docs/verify.md
 docs/nginx_routing.md
