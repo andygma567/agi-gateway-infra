@@ -46,6 +46,8 @@ Run from the repo root. Replace `VM_IP` with the address the human gave you.
 
 6. **Report** the playbook recap, the health check status codes, and the UI URLs plus default logins from `README.md`.
 
+7. **After deploy is not optional.** Health 200s do not mean models or spend tracking are right. Follow **After deploy** in `README.md`: add/check models and rates with the `litellm-provision-model` skill (especially step 7 if spend is `$0`), and confirm LiteLLM is storing request/response bodies (`store_prompts_in_spend_logs`). There is no separate logging skill; the playbook's first run turns it on via `/config/update`.
+
 ## Do not
 
 - Create new roles, playbooks, vault files, or CI unless asked.

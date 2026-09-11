@@ -1,6 +1,6 @@
 ---
 name: litellm-provision-model
-description: Add or update a provider-backed model on a running LiteLLM proxy in place, over the management API, given a provider name and an API key. Covers picking the litellm model string, testing the credential with /health/test_connection, writing it with /model/new or /model/{model_id}/update, verifying with a real chat completion, and optionally minting a virtual key with /key/generate. Use when the user supplies a provider plus an API key and wants it live on a LiteLLM proxy without editing config.yaml or restarting the container.
+description: Add or update a provider-backed model on a running LiteLLM proxy in place, over the management API, given a provider name and an API key. Covers picking the litellm model string, testing the credential with /health/test_connection, writing it with /model/new or /model/{model_id}/update, verifying with a real chat completion, PATCHing input/output/cached-input rates when the deployed price map prices the model at zero, and optionally minting a virtual key with /key/generate. Use when the user supplies a provider plus an API key and wants it live on a LiteLLM proxy without editing config.yaml or restarting the container, or when spend logs show 0.0 for a working model.
 disable-model-invocation: true
 ---
 
@@ -56,7 +56,8 @@ Track progress with this checklist:
 - [ ] 4. Test the credential before storing it
 - [ ] 5. Create the model, or update the existing one
 - [ ] 6. Verify with a real completion
-- [ ] 7. Optional: mint a virtual key
+- [ ] 7. Confirm spend is non-zero; PATCH rates if the proxy priced the model at zero
+- [ ] 8. Optional: mint a virtual key
 ```
 
 ### Step 2: reachability and auth
@@ -159,7 +160,71 @@ curl -sS -X POST "$LITELLM_BASE_URL/v1/chat/completions" \
 
 A completion that comes back with content is the proof the provisioning worked. Show the user the command and the output
 
-### Step 7: optional virtual key
+A working completion does **not** prove cost tracking works. The deployed proxy (LiteLLM 1.98.0 as of 2026-09) ships an older `model_prices_and_context_window.json` than GitHub `main`. A model that exists on `main` can still register here with `input_cost_per_token: 0`. Completions succeed, `x-litellm-response-cost` is `0.0`, and `/spend/logs` records `spend: 0.0` with no error. That is how `meta/muse-spark-1.3` and `meta/muse-spark-1.3-contributor` first landed
+
+### Step 7: confirm spend, PATCH rates if zero
+
+Read the rates the **running** proxy attached to the new row, not the GitHub map:
+
+```bash
+curl -sS -H "Authorization: Bearer $LITELLM_MASTER_KEY" "$LITELLM_BASE_URL/model/info" \
+  | jq --arg n "$MODEL_NAME" '.data[] | select(.model_name == $n) | {
+      id: .model_info.id,
+      input: .model_info.input_cost_per_token,
+      output: .model_info.output_cost_per_token,
+      cache_read: .model_info.cache_read_input_token_cost
+    }'
+```
+
+If `input` is `0` or missing, look the model up on the current map (or the provider's pricing page) and write the per-token rates onto the deployment. Costs are dollars per token, not per million:
+
+```bash
+# Example: rates LiteLLM main listed for meta/muse-spark-1.3-contributor
+# (source: https://ai.developer.meta.com/docs/pricing-rate-limits)
+#   input $0.10 / 1M  -> 1e-07
+#   output $0.20 / 1M -> 2e-07
+#   cached $0.002 / 1M -> 2e-09
+# meta/muse-spark-1.3 was 1.25e-06 / 4.25e-06 / 1.5e-07
+export MODEL_ID='<id from the listing above>'
+jq -n --arg id "$MODEL_ID" \
+  --argjson inc 1e-07 --argjson outc 2e-07 --argjson cachec 2e-09 \
+  '{model_info:{
+      id:$id,
+      input_cost_per_token:$inc,
+      output_cost_per_token:$outc,
+      cache_read_input_token_cost:$cachec,
+      supports_prompt_caching:true
+    }}' \
+| curl -sS -X PATCH "$LITELLM_BASE_URL/model/$MODEL_ID/update" \
+    -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+    -H 'Content-Type: application/json' --data @-
+```
+
+The PATCH writes into the same Postgres row as `/model/new`, so it survives container recreate. It is lost if someone deletes the model and re-adds it without the rates
+
+Re-run the step 6 completion and check the cost headers (LiteLLM 1.98 also emits the split `*-input` / `*-output` fields; older scripts that only read `x-litellm-response-cost` can print `None` even when spend is set):
+
+```bash
+curl -sS -D - -o /tmp/completion.json \
+  -X POST "$LITELLM_BASE_URL/v1/chat/completions" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H 'Content-Type: application/json' \
+  -d "{\"model\":\"$MODEL_NAME\",\"messages\":[{\"role\":\"user\",\"content\":\"say hi\"}],\"max_tokens\":16}" \
+| grep -i 'x-litellm-response-cost'
+```
+
+Expect a non-zero `x-litellm-response-cost`. Hand-check: `(prompt - cached) * input + cached * cache_read + completion * output`. Then confirm the proxy persisted it:
+
+```bash
+curl -sS -H "Authorization: Bearer $LITELLM_MASTER_KEY" "$LITELLM_BASE_URL/spend/logs" \
+  | jq --arg n "$MODEL_NAME" '[.[] | select(.model == $n)] | .[-3:] | .[] | {startTime, spend, prompt_tokens, completion_tokens}'
+```
+
+`/spend/logs` stores the discounted `spend` but has no cached-token column. The cache count only exists on the live response (`usage.prompt_tokens_details.cached_tokens`)
+
+Do not invent rates. If the model is missing from both the deployed map and GitHub `main`, stop and ask for the provider's published per-million prices
+
+### Step 8: optional virtual key
 
 Only when the user asks for one. Scope it to the model just added:
 
@@ -194,3 +259,5 @@ curl -sS -X POST "$LITELLM_BASE_URL/model/delete" \
 | Two rows share a `model_name` | A duplicate `/model/new`. Delete the stale `model_id` |
 | Reaches nginx but 404s | Wrong Host header. Use `-H 'Host: litellm.test'` or hit port 4000 directly |
 | 403 `Blocked by sandbox network policy` on curl | Agent sandbox blocked outbound HTTP to the VM or `litellm.test`. Re-run with full network permissions, not a different URL |
+| Completions work but `spend` / `x-litellm-response-cost` is `0.0` | The running LiteLLM image's price map does not know this model (newer than the image, or a custom `api_base`). PATCH `model_info` rates as in step 7. Recheck `model/info` after, not the GitHub JSON |
+| Cached tokens appear on the response but spend does not drop | `cache_read_input_token_cost` was never set, so LiteLLM bills cached tokens at the full input rate. PATCH that field and retry a warm prefix |

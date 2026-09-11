@@ -64,19 +64,42 @@ UIs (browser):
 Debugging tips (Host-header routing, bypassing nginx, on-VM logs): [`docs/verify.md`](docs/verify.md).  
 How nginx hostname routing works: [`docs/nginx_routing.md`](docs/nginx_routing.md).
 
-## LiteLLM request/response logging
+## After deploy
 
-The first playbook run turns on **Store Prompts in Spend Logs**, so the Logs page shows full
-request and response bodies instead of the "Request/Response Data Not Available" banner. It also
-sets a 30-day retention period, since storing bodies grows the Postgres volume much faster than
-metadata alone.
+Health checks only prove the stack is up. Two things still need a look, or you will forget them.
 
-The playbook writes this through the same API call the dashboard uses, so the UI stays the source
-of truth. Change it at http://litellm.test/ui under **Admin Settings → Logging Settings**: toggle
-**Store Prompts in Spend Logs**, optionally adjust **Maximum Spend Logs Retention Period**, then
-click **Save Settings**. If you turn it off there, later playbook runs leave it off.
+### Models and pricing
 
-Either way it applies only to new requests, so entries logged before it was enabled stay empty.
+`site.yml` does not register provider models or their rates. Add a model with the
+[`litellm-provision-model`](.cursor/skills/litellm-provision-model/SKILL.md) skill (management API:
+`/model/new`, then a real completion).
+
+A completion that returns content can still cost **$0.00** in spend logs. The LiteLLM image's
+bundled price map often lags the models you just added. After every new model, do **step 7** of
+that skill: read `input_cost_per_token` from `/model/info`, PATCH the rates if they are `0`, and
+confirm `x-litellm-response-cost` is non-zero.
+
+### Request/response logging
+
+There is no separate skill for this. The playbook's first run POSTs LiteLLM's `/config/update` to
+turn on **Store Prompts in Spend Logs** (30-day retention), which is what fills the Logs page.
+Later playbook runs leave whatever an admin already stored.
+
+Confirm it is on (or flip it) with the same API the dashboard uses:
+
+```bash
+curl -sS -H "Authorization: Bearer sk-local-dev-master-key" \
+  'http://litellm.test/config/list?config_type=general_settings' \
+  | jq '.[] | select(.field_name=="store_prompts_in_spend_logs")'
+
+curl -sS -X POST http://litellm.test/config/update \
+  -H "Authorization: Bearer sk-local-dev-master-key" \
+  -H 'Content-Type: application/json' \
+  -d '{"general_settings":{"store_prompts_in_spend_logs":true,"maximum_spend_logs_retention_period":"30d"}}'
+```
+
+Or in the UI: http://litellm.test/ui → **Admin Settings → Logging Settings**. If you turn it off
+there, later playbook runs leave it off. Only new requests get bodies; older log rows stay empty.
 
 ## Optional: change secrets
 
