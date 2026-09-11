@@ -12,6 +12,8 @@ Langfuse and LiteLLM each run from their own published Docker Compose file (re-d
 
 You only need to provide the VM’s IP address. Default secrets in the repo are fine for a first bring-up.
 
+Need a new DigitalOcean host? Provision one with OpenTofu in [`terraform/`](terraform/) (`s-8vcpu-16gb`, ~$96/mo), then paste the output IP below.
+
 ## Deploy (given a VM IP)
 
 Replace `VM_IP` with the real address (example: `203.0.113.10`).
@@ -119,6 +121,7 @@ requirements.yml         # Galaxy roles + collections
 roles/langfuse/          # download compose + .env + up
 roles/litellm/           # download compose + override + up + logging defaults
 roles/nginx_gateway/     # hostname vhosts
+terraform/               # optional: DigitalOcean droplet (OpenTofu)
 docs/verify.md
 docs/nginx_routing.md
 ```
