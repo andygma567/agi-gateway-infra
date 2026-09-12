@@ -14,6 +14,8 @@ You only need to provide the VM’s IP address. Default secrets in the repo are 
 
 Need a new DigitalOcean host? Provision one with OpenTofu in [`terraform/`](terraform/) (`s-8vcpu-16gb`, ~$96/mo), then paste the output IP below.
 
+Running on a smaller OCI `VM.Standard.E5.Flex` box? Host-side memory/CPU caps used on one live deploy: [`docs/oci_vm.md`](docs/oci_vm.md).
+
 ## Deploy (given a VM IP)
 
 Replace `VM_IP` with the real address (example: `203.0.113.10`).
@@ -64,7 +66,8 @@ UIs (browser):
 | LiteLLM | http://litellm.test/ui | `admin` / `sk-local-dev-master-key` |
 
 Debugging tips (Host-header routing, bypassing nginx, on-VM logs): [`docs/verify.md`](docs/verify.md).  
-How nginx hostname routing works: [`docs/nginx_routing.md`](docs/nginx_routing.md).
+How nginx hostname routing works: [`docs/nginx_routing.md`](docs/nginx_routing.md).  
+OCI VM shape and Docker ceilings (worked example): [`docs/oci_vm.md`](docs/oci_vm.md).
 
 ## After deploy
 
@@ -124,4 +127,5 @@ roles/nginx_gateway/     # hostname vhosts
 terraform/               # optional: DigitalOcean droplet (OpenTofu)
 docs/verify.md
 docs/nginx_routing.md
+docs/oci_vm.md
 ```
