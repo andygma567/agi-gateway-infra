@@ -28,12 +28,6 @@ variable "ssh_public_key_path" {
   default     = "~/.ssh/id_ed25519.pub"
 }
 
-variable "vpc_ip_range" {
-  description = "Private IP CIDR for the VPC in the chosen region"
-  type        = string
-  default     = "10.116.0.0/20"
-}
-
 variable "tags" {
   description = "Tags applied to the droplet"
   type        = list(string)

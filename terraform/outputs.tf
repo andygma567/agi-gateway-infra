@@ -12,8 +12,3 @@ output "droplet_size" {
   description = "Droplet size slug"
   value       = digitalocean_droplet.langfuse_litellm.size
 }
-
-output "vpc_uuid" {
-  description = "UUID of the VPC"
-  value       = digitalocean_vpc.main.id
-}
