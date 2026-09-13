@@ -19,6 +19,9 @@ Examples (from the repo root, against the test gateway):
       --model-a groq/openai/gpt-oss-20b \\
       --model-b groq/openai/gpt-oss-120b
 
+Each proxy run prints a run_id (LiteLLM session ID). Filter Logs by that
+Session ID to group the turns and see the session total spend.
+
 The direct mode skips the proxy and calls api.groq.com, which tells you whether
 a missing cached_tokens came from Groq or from LiteLLM:
 
@@ -40,6 +43,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 DEFAULT_BASE_URL = "http://litellm.test"
@@ -77,6 +81,15 @@ class Turn:
 def _env(name: str, default: str) -> str:
     value = os.environ.get(name, "").strip()
     return value if value else default
+
+
+def new_run_id() -> str:
+    return datetime.now(timezone.utc).strftime("exp-%Y%m%d-%H%M%S")
+
+
+def print_run_id(run_id: str) -> None:
+    print(f"run_id={run_id}")
+    print(f"Look this up in LiteLLM Logs → Filters → Session ID.")
 
 
 def system_prompt(repeats: int) -> str:
@@ -125,13 +138,15 @@ def complete(
     max_tokens: int,
     host_header: str | None,
     timeout: float,
+    run_id: str,
 ) -> tuple[dict[str, str], dict[str, Any]]:
     body = {
         "model": model,
         "messages": messages,
         "max_tokens": max_tokens,
         "stream": False,
-        "metadata": {"tags": ["groq-cache-experiment", tag]},
+        "litellm_session_id": run_id,
+        "metadata": {"tags": ["groq-cache-experiment", tag, f"run:{run_id}"]},
     }
     return request_json(
         f"{base_url.rstrip('/')}/v1/chat/completions",
@@ -255,6 +270,8 @@ def cmd_models(args: argparse.Namespace) -> None:
 
 
 def cmd_cold_warm(args: argparse.Namespace) -> None:
+    run_id = new_run_id()
+    print_run_id(run_id)
     messages = [
         {"role": "system", "content": system_prompt(args.prefix_repeats)},
         {"role": "user", "content": args.question},
@@ -270,6 +287,7 @@ def cmd_cold_warm(args: argparse.Namespace) -> None:
             max_tokens=args.max_tokens,
             host_header=args.host_header,
             timeout=args.timeout,
+            run_id=run_id,
         )
         turn = parse_turn(label, args.model, headers, payload)
         print_turn(turn)
@@ -277,6 +295,7 @@ def cmd_cold_warm(args: argparse.Namespace) -> None:
         if label == "cold" and args.pause > 0:
             time.sleep(args.pause)
     print_summary(turns)
+    print(f"\nrun_id={run_id}")
     if turns[0].cached_tokens:
         print(
             "\nnote: cold already had cached_tokens > 0. "
@@ -334,6 +353,8 @@ def cmd_direct(args: argparse.Namespace) -> None:
 
 
 def cmd_switch(args: argparse.Namespace) -> None:
+    run_id = new_run_id()
+    print_run_id(run_id)
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt(args.prefix_repeats)}]
     script = [
         ("A-cold", args.model_a, "What is prompt caching, and why does prefix order matter?"),
@@ -354,6 +375,7 @@ def cmd_switch(args: argparse.Namespace) -> None:
             max_tokens=args.max_tokens,
             host_header=args.host_header,
             timeout=args.timeout,
+            run_id=run_id,
         )
         turn = parse_turn(label, model, headers, payload)
         print_turn(turn)
@@ -362,6 +384,7 @@ def cmd_switch(args: argparse.Namespace) -> None:
         if args.pause > 0:
             time.sleep(args.pause)
     print_summary(turns)
+    print(f"\nrun_id={run_id}")
     print(
         "\nwhat to look for: A-cold and B-after-A should be near cached_tokens=0 "
         "(new model, or first use of this prefix). A-warm and B-warm should rise. "
