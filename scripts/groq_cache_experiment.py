@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Run Groq prompt-cache experiments through a LiteLLM proxy.
+"""Run prompt-cache experiments through a LiteLLM proxy.
 
-Groq prompt caching is automatic and currently billed on the gpt-oss family.
-This script never streams, because LiteLLM has dropped Groq cached_tokens on
-streamed responses.
+Defaults to gemini/gemini-3.5-flash-lite. The other cheap model used for
+tracking cache-token spend is meta/muse-spark-1.3-contributor. Gemini's
+implicit cache needs a long prefix (~400 repeats, ~29k tokens); 40 is too
+small and will report no cached_tokens.
 
 Examples (from the repo root, against the test gateway):
 
@@ -12,24 +13,22 @@ Examples (from the repo root, against the test gateway):
 
   python3 scripts/groq_cache_experiment.py models
 
+  python3 scripts/groq_cache_experiment.py cold-warm
+
   python3 scripts/groq_cache_experiment.py cold-warm \\
-      --model groq/openai/gpt-oss-20b
+      --model meta/muse-spark-1.3-contributor
 
-  python3 scripts/groq_cache_experiment.py switch \\
-      --model-a groq/openai/gpt-oss-20b \\
-      --model-b groq/openai/gpt-oss-120b
+  python3 scripts/groq_cache_experiment.py switch
 
-Each proxy run prints a run_id (LiteLLM session ID). Filter Logs by that
-Session ID to group the turns and see the session total spend.
+Each proxy run prints a LiteLLM session ID on its own line. Paste that
+into Logs → Filters → Session ID to group the turns and see the session
+total spend.
 
-The direct mode skips the proxy and calls api.groq.com, which tells you whether
-a missing cached_tokens came from Groq or from LiteLLM:
+The direct mode skips the proxy and calls api.groq.com:
 
   export GROQ_API_KEY=...
   python3 scripts/groq_cache_experiment.py direct \\
       --model groq/openai/gpt-oss-20b
-
-Override the public LiteLLM model_name if you registered an alias.
 """
 
 from __future__ import annotations
@@ -50,10 +49,11 @@ DEFAULT_BASE_URL = "http://litellm.test"
 DEFAULT_MASTER_KEY = "sk-local-dev-master-key"
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_QUESTION = "In one paragraph, explain why the static prefix must come first."
-DEFAULT_MODEL_A = "groq/openai/gpt-oss-20b"
-DEFAULT_MODEL_B = "groq/openai/gpt-oss-120b"
+DEFAULT_MODEL_A = "gemini/gemini-3.5-flash-lite"
+DEFAULT_MODEL_B = "meta/muse-spark-1.3-contributor"
+DEFAULT_GROQ_MODEL = "groq/openai/gpt-oss-20b"
 
-# Repeated so the static prefix is well above typical cache floors (~1k tokens).
+# Repeated so the static prefix is well above Gemini's implicit-cache floor.
 _PREFIX_UNIT = (
     "Keep this block at the front of every request. Prompt caching only hits "
     "when the prefix matches exactly, so instructions, tool specs, and "
@@ -88,8 +88,8 @@ def new_run_id() -> str:
 
 
 def print_run_id(run_id: str) -> None:
-    print(f"run_id={run_id}")
-    print(f"Look this up in LiteLLM Logs → Filters → Session ID.")
+    print("LiteLLM session ID (paste into Logs → Filters → Session ID):")
+    print(run_id)
 
 
 def system_prompt(repeats: int) -> str:
@@ -261,7 +261,7 @@ def cmd_models(args: argparse.Namespace) -> None:
     )
     rows = payload.get("data") or []
     if not rows:
-        print("No models registered. Provision Groq models first.")
+        print("No models registered. Provision models first.")
         return
     print(f"{'model_name':<36} {'litellm_params.model'}")
     for row in rows:
@@ -295,7 +295,8 @@ def cmd_cold_warm(args: argparse.Namespace) -> None:
         if label == "cold" and args.pause > 0:
             time.sleep(args.pause)
     print_summary(turns)
-    print(f"\nrun_id={run_id}")
+    print()
+    print_run_id(run_id)
     if turns[0].cached_tokens:
         print(
             "\nnote: cold already had cached_tokens > 0. "
@@ -304,8 +305,8 @@ def cmd_cold_warm(args: argparse.Namespace) -> None:
     elif turns[-1].cached_tokens in (None, 0):
         print(
             "\nnote: warm cached_tokens was 0. Either this provider does not report cached "
-            "tokens (Groq gpt-oss does not, as of this writing), the prefix is below the "
-            "provider's cache floor, or the two calls were too far apart."
+            "tokens, the prefix is below the provider's cache floor, or the two calls "
+            "were too far apart."
         )
 
 
@@ -384,7 +385,8 @@ def cmd_switch(args: argparse.Namespace) -> None:
         if args.pause > 0:
             time.sleep(args.pause)
     print_summary(turns)
-    print(f"\nrun_id={run_id}")
+    print()
+    print_run_id(run_id)
     print(
         "\nwhat to look for: A-cold and B-after-A should be near cached_tokens=0 "
         "(new model, or first use of this prefix). A-warm and B-warm should rise. "
@@ -407,10 +409,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-tokens",
         type=int,
         default=512,
-        help="Must cover reasoning tokens plus the answer; gpt-oss spends the budget on reasoning first",
+        help="Must cover reasoning tokens plus the answer; some models spend the budget on reasoning first",
     )
-    shared.add_argument("--prefix-repeats", type=int, default=40, help="How many times to repeat the static prefix block")
-    shared.add_argument("--pause", type=float, default=0.0, help="Seconds to wait between turns")
+    shared.add_argument(
+        "--prefix-repeats",
+        type=int,
+        default=400,
+        help="How many times to repeat the static prefix block. Gemini needs ~400; 40 is below its cache floor",
+    )
+    shared.add_argument("--pause", type=float, default=3.0, help="Seconds to wait between turns")
 
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -432,7 +439,7 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[shared],
         help="Same cold/warm pair sent straight to api.groq.com, bypassing the proxy",
     )
-    direct.add_argument("--model", default=_env("LITELLM_MODEL", DEFAULT_MODEL_A))
+    direct.add_argument("--model", default=_env("LITELLM_MODEL", DEFAULT_GROQ_MODEL))
     direct.add_argument("--question", default=DEFAULT_QUESTION)
     direct.set_defaults(func=cmd_direct)
 
