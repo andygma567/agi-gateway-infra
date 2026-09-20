@@ -4,6 +4,23 @@ General guidance for AI agents working in this repository.
 
 This is a small Ansible project. It is deliberately plain: no Jinja templating, no generated config, no vault, no lint gates. Keep it that way.
 
+## Knowledge base
+
+`docs/` is the project knowledge base. `docs/decisions/` holds Architecture Decision Records (ADRs).
+
+Read [docs/README.md](docs/README.md) before making design or architecture changes. Read any ADR that applies to the area you're touching.
+
+### Recording decisions
+
+When a change makes a durable, cross-cutting architecture decision, add an ADR
+in the same PR. Routine implementation choices do not need an ADR. Follow
+[docs/decisions/README.md](docs/decisions/README.md).
+
+Do not rewrite an accepted ADR's decision or rationale. A change of mind is a
+new ADR; only the old ADR's status and supersession link may then change.
+
+If a code change makes anything in `docs/` inaccurate, update that doc in the same PR.
+
 ## Make minimal changes
 
 Prefer the smallest edit that solves the problem. Don't refactor code you weren't asked to touch, don't add abstraction for something used once, and don't introduce tooling (linters, CI, test harnesses, secret managers) unless asked. If you spot an unrelated problem, mention it instead of fixing it.
