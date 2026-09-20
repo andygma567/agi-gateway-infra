@@ -13,7 +13,7 @@ variable "droplet_size" {
 variable "droplet_name" {
   description = "Droplet hostname / display name"
   type        = string
-  default     = "langfuse-litellm-dev"
+  default     = "litellm-dev"
 }
 
 variable "droplet_image" {
@@ -31,5 +31,5 @@ variable "ssh_public_key_path" {
 variable "tags" {
   description = "Tags applied to the droplet"
   type        = list(string)
-  default     = ["dev", "langfuse", "litellm"]
+  default     = ["dev", "litellm"]
 }

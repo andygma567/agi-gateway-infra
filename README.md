@@ -1,8 +1,8 @@
 # AI Gateway Infra
 
-Ansible playbook that installs Docker, Langfuse, LiteLLM, and nginx on a single Ubuntu 24.04 VM.
+Ansible playbook that installs Docker, LiteLLM, and nginx on a single Ubuntu 24.04 VM.
 
-Langfuse and LiteLLM each run from their own published Docker Compose file (re-downloaded on every playbook run). nginx routes `langfuse.test` → Langfuse (:3000) and `litellm.test` → LiteLLM (:4000).
+LiteLLM runs from its published Docker Compose file (re-downloaded on every playbook run). nginx routes `litellm.test` → LiteLLM (:4000).
 
 ## What you need
 
@@ -39,30 +39,24 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 root@VM_IP 'echo ok'
 ansible-playbook site.yml
 ```
 
-Success looks like: playbook exit code `0`, and the final recap has no `failed=` hosts. First run can take several minutes (Docker install + image pulls). After it finishes, wait ~2–3 minutes for Langfuse migrations before verifying.
+Success looks like: playbook exit code `0`, and the final recap has no `failed=` hosts. First run can take several minutes (Docker install + image pulls).
 
 ## Verify
 
 On the same machine that runs Ansible:
 
 ```bash
-# Name resolution for the hostname-based nginx routes
-echo "VM_IP langfuse.test litellm.test" | sudo tee -a /etc/hosts
+# Name resolution for the hostname-based nginx route
+echo "VM_IP litellm.test" | sudo tee -a /etc/hosts
 
-# Health endpoints (expect HTTP 200)
-curl -si http://langfuse.test/api/public/health | head -1
+# Health endpoint (expect HTTP 200)
 curl -si http://litellm.test/health/liveliness | head -1
-
-# Optional: confirm Langfuse headless init created the project
-curl -su 'pk-lf-local-dev-public-key:sk-lf-local-dev-secret-key' \
-  http://langfuse.test/api/public/projects
 ```
 
-UIs (browser):
+UI (browser):
 
 | Service | URL | Login |
 |---------|-----|-------|
-| Langfuse | http://langfuse.test | `local@langfuse.com` / `password` |
 | LiteLLM | http://litellm.test/ui | `admin` / `sk-local-dev-master-key` |
 
 Debugging tips (Host-header routing, bypassing nginx, on-VM logs): [`docs/verify.md`](docs/verify.md).  
@@ -111,10 +105,20 @@ there, later playbook runs leave it off. Only new requests get bodies; older log
 
 Only if you want non-default credentials:
 
-- Langfuse: [`roles/langfuse/files/langfuse.env`](roles/langfuse/files/langfuse.env)
 - LiteLLM: [`roles/litellm/files/docker-compose.override.yml`](roles/litellm/files/docker-compose.override.yml)
 
 Do not change `LITELLM_SALT_KEY` after you have stored provider API keys in LiteLLM.
+
+## Removing Langfuse from an existing VM
+
+The playbook does not tear down a previous Langfuse install. On the VM:
+
+```bash
+cd /opt/langfuse && docker compose down
+# optional: rm -rf /opt/langfuse
+```
+
+Then re-run `ansible-playbook site.yml` so nginx drops the Langfuse vhost.
 
 ## Layout
 
@@ -122,7 +126,6 @@ Do not change `LITELLM_SALT_KEY` after you have stored provider API keys in Lite
 site.yml                 # playbook entrypoint
 inventory/hosts.yml      # VM IP + ansible_user
 requirements.yml         # Galaxy roles + collections
-roles/langfuse/          # download compose + .env + up
 roles/litellm/           # download compose + override + up + logging defaults
 roles/nginx_gateway/     # hostname vhosts
 terraform/               # optional: DigitalOcean droplet (OpenTofu)

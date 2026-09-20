@@ -4,10 +4,11 @@ These limits were applied on the live OCI VM `meridiangateway` after deploy. Thi
 
 Re-running `ansible-playbook site.yml`:
 
-- Does **not** install the Langfuse compose override or the ClickHouse XML files.
 - **Does** copy [`roles/litellm/files/docker-compose.override.yml`](../roles/litellm/files/docker-compose.override.yml) onto `/opt/litellm/docker-compose.override.yml`. Any LiteLLM memory/CPU/`NUM_WORKERS` tweaks on the VM are overwritten unless you re-apply them after the play.
 
 The live files on the VM are the copy to reuse. This note records shape and ceilings only; it does not reconstruct the full override YAML.
+
+Without Langfuse (~7 GiB of Docker maxima), LiteLLM + its DB (~4.5 GiB) fit a smaller host than this 12 GB box.
 
 ## Host
 
@@ -50,34 +51,20 @@ The live files on the VM are the copy to reuse. This note records shape and ceil
 
 ## Where the limits live
 
-Compose overrides:
+Compose override:
 
-- `/opt/langfuse/docker-compose.override.yml`
 - `/opt/litellm/docker-compose.override.yml`
-
-Also resource-related (not in those YAML files):
-
-- `/opt/langfuse/clickhouse/config.d/low_memory.xml`
-- `/opt/langfuse/clickhouse/users.d/low_memory.xml`
-
-Those ClickHouse files shrink caches, cap per-query RAM, and disable unused system logs inside the 2 GiB ClickHouse container.
 
 ## Docker ceilings
 
-Limits are **maxima**, not reservations. The sum of maxima is **greater than host RAM**, so they are blast-radius caps.
+Limits are **maxima**, not reservations.
 
 | Container | mem_limit | CPU quota |
 |-----------|-----------|-----------|
-| langfuse-web | 2g | none |
-| langfuse-worker | 1536m | none |
-| clickhouse | 2g | none |
-| langfuse postgres | 1g | none |
-| redis | 384m | none |
-| minio | 384m | none |
 | **litellm** | **4g** | **1.0 CPU**, `NUM_WORKERS=1` |
 | litellm postgres | 512m | none |
 
-Langfuse Docker maxima ≈ **7.3 GiB**. LiteLLM + its DB ≈ **4.5 GiB**. Host ≈ **11.7 GiB** with no swap. nginx is negligible.
+LiteLLM + its DB ≈ **4.5 GiB**. Host ≈ **11.7 GiB** with no swap. nginx is negligible.
 
 ## Observed usage (snapshot)
 
@@ -86,6 +73,3 @@ Rough live usage at collection time:
 | Container | Usage / limit |
 |-----------|----------------|
 | LiteLLM | 912 MiB / 4 GiB |
-| ClickHouse | 641 MiB / 2 GiB |
-| Langfuse web | 813 MiB / 2 GiB |
-| Langfuse worker | 680 MiB / 1.5 GiB |

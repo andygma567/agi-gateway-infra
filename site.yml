@@ -4,7 +4,6 @@
   become: true
   roles:
     - geerlingguy.docker
-    - langfuse
     - litellm
     - nginxinc.nginx
     - nginx_gateway

@@ -1,7 +1,7 @@
 # DigitalOcean VM (OpenTofu)
 
 Provisions a DigitalOcean Basic droplet for this repo’s Ansible gateway stack
-(Langfuse + LiteLLM + nginx). OpenTofu creates the VM and firewall only; run
+(LiteLLM + nginx). OpenTofu creates the VM and firewall only; run
 [`site.yml`](../site.yml) afterward to install the software.
 
 Compatible with Terraform as well; this README uses `tofu`.
@@ -15,7 +15,7 @@ Compatible with Terraform as well; this README uses `tofu`.
 | Region default | `nyc3` |
 | Cost | **~$96/mo** ($0.14286/hr), monthly cap |
 | VPC | Region default (no custom VPC) |
-| Firewall inbound | TCP 22, 80, 3000, 4000 |
+| Firewall inbound | TCP 22, 80, 4000 |
 | Backups / DO monitoring | Off |
 
 Docker and the gateway stack are installed by Ansible (`geerlingguy.docker` + `site.yml`), not by this stack.
@@ -51,7 +51,7 @@ tofu output -raw ipv4_address
 
 From the repo root, put that IP in [`inventory/hosts.yml`](../inventory/hosts.yml) as `ansible_host`, confirm SSH, then follow the root [README](../README.md) deploy steps (`uv sync`, `ansible-galaxy`, `ansible-playbook site.yml`).
 
-Gateway software lands under `/opt/langfuse` and `/opt/litellm`.
+Gateway software lands under `/opt/litellm`.
 
 ## Destroy
 
