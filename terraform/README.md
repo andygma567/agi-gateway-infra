@@ -41,7 +41,7 @@ tofu init
 tofu apply
 ```
 
-State is local (`terraform.tfstate`). No remote backend.
+State is local (`terraform.tfstate`). No remote backend. If DigitalOcean already has this public key (common after a previous apply with lost state), OpenTofu reuses it instead of registering a duplicate.
 
 ## Hand off to Ansible
 
@@ -60,4 +60,4 @@ cd terraform
 tofu destroy
 ```
 
-That deletes the droplet, firewall, and the SSH key resource registered by this stack. Local Ansible inventory is unchanged — clear `ansible_host` yourself if you reuse the file.
+That deletes the droplet and firewall. A leftover laptop SSH key that already lived on the DigitalOcean account is reused, not deleted. Local Ansible inventory is unchanged — clear `ansible_host` yourself if you reuse the file.
