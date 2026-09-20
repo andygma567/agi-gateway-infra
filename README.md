@@ -77,7 +77,8 @@ Health checks only prove the stack is up. Two things still need a look, or you w
 
 `site.yml` does not register provider models or their rates. Add a model with the
 [`litellm-provision-model`](.cursor/skills/litellm-provision-model/SKILL.md) skill (management API:
-`/model/new`, then a real completion).
+`/model/new`, then a real completion). Create or retune a complexity auto router with
+[`litellm-auto-router`](.cursor/skills/litellm-auto-router/SKILL.md).
 
 A completion that returns content can still cost **$0.00** in spend logs. The LiteLLM image's
 bundled price map often lags the models you just added. After every new model, do **step 7** of
